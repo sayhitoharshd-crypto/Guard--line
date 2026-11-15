@@ -28,7 +28,7 @@ jobs:
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file found in repository root."
+            echo "ERROR: No ZIP file found."
             exit 1
           fi
 
@@ -99,6 +99,15 @@ jobs:
             exit 1
           fi
           echo "Expo token is configured."
+
+      - name: Initialize Expo project
+        working-directory: ${{ steps.project.outputs.app }}
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          npx eas-cli init \
+            --account arshdxr \
+            --non-interactive
 
       - name: Build Android APK with EAS
         working-directory: ${{ steps.project.outputs.app }}
