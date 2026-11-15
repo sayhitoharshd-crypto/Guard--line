@@ -23,7 +23,6 @@ jobs:
         shell: bash
         run: |
           set -e
-
           mkdir -p /tmp/lineguard
 
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)
@@ -33,13 +32,10 @@ jobs:
             exit 1
           fi
 
-          echo "Found ZIP: $ZIP_FILE"
-
+          echo "Found: $ZIP_FILE"
           unzip -o "$ZIP_FILE" -d /tmp/lineguard
 
-          echo "ZIP extracted successfully."
-
-      - name: Locate project
+      - name: Locate LineGuard project
         id: project
         shell: bash
         run: |
@@ -49,13 +45,14 @@ jobs:
 
           if [ -z "$WORKSPACE" ]; then
             echo "ERROR: pnpm-workspace.yaml not found."
-            find /tmp/lineguard -maxdepth 4 -type f | head -100
             exit 1
           fi
 
           PROJECT_ROOT=$(dirname "$WORKSPACE")
 
-          APP_CONFIG=$(find "$PROJECT_ROOT" -path '*/node_modules/*' -prune -o -name app.json -print | grep '/artifacts/lineguard/app.json' | head -1 || true)
+          APP_CONFIG=$(find "$PROJECT_ROOT" \
+            -path '*/node_modules/*' -prune -o \
+            -path '*/artifacts/lineguard/app.json' -print | head -1)
 
           if [ -z "$APP_CONFIG" ]; then
             echo "ERROR: LineGuard app.json not found."
@@ -80,18 +77,28 @@ jobs:
         with:
           version: 10
 
-      - name: Install project dependencies
+      - name: Install dependencies
         working-directory: ${{ steps.project.outputs.root }}
         run: pnpm install --no-frozen-lockfile
 
-      - name: Set up Expo authentication
+      - name: Initialize Git for EAS
+        working-directory: ${{ steps.project.outputs.root }}
+        run: |
+          git init
+          git config user.name "LineGuard Build"
+          git config user.email "lineguard-build@example.com"
+          git add -A
+          git commit -m "Prepare LineGuard Android build"
+
+      - name: Check Expo token
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           if [ -z "$EXPO_TOKEN" ]; then
             echo "ERROR: EXPO_TOKEN secret is missing."
             exit 1
           fi
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          echo "Expo token is configured."
 
       - name: Build Android APK with EAS
         working-directory: ${{ steps.project.outputs.app }}
