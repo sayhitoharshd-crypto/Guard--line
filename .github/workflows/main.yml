@@ -24,8 +24,9 @@ jobs:
         shell: bash
         run: |
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)
+
           if [ -z "$ZIP_FILE" ]; then
-            echo "No project ZIP found in repository root."
+            echo "ERROR: No project ZIP found in repository root."
             exit 1
           fi
 
@@ -33,19 +34,17 @@ jobs:
           unzip -q "$ZIP_FILE" -d /tmp/lineguard
 
           APP_JSON=$(find /tmp/lineguard -path '*/artifacts/lineguard/app.json' -print -quit)
+
           if [ -z "$APP_JSON" ]; then
-            echo "Could not find artifacts/lineguard/app.json."
+            echo "ERROR: Could not find artifacts/lineguard/app.json."
             exit 1
           fi
 
           APP_DIR=$(dirname "$APP_JSON")
-          ROOT_DIR=$(dirname "$(find "$APP_DIR" -name pnpm-workspace.yaml -print -quit | head -n 1)")
-          if [ ! -f "$ROOT_DIR/pnpm-workspace.yaml" ]; then
-            ROOT_DIR=$(find /tmp/lineguard -name pnpm-workspace.yaml -printf '%h\n' -quit)
-          fi
+          ROOT_DIR=$(find /tmp/lineguard -name pnpm-workspace.yaml -printf '%h\n' -quit)
 
-          if [ -z "$ROOT_DIR" ] || [ ! -f "$ROOT_DIR/pnpm-workspace.yaml" ]; then
-            echo "Could not find pnpm workspace root."
+          if [ -z "$ROOT_DIR" ]; then
+            echo "ERROR: Could not find pnpm workspace root."
             exit 1
           fi
 
@@ -67,13 +66,27 @@ jobs:
         run: pnpm install --no-frozen-lockfile
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licences
+        shell: bash
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          if [ ! -f "$SDKMANAGER" ]; then
+            SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | sort | tail -n 1)
+          fi
+
+          if [ -z "$SDKMANAGER" ] || [ ! -f "$SDKMANAGER" ]; then
+            echo "ERROR: Android SDK manager not found."
+            exit 1
+          fi
+
+          yes | "$SDKMANAGER" --licenses || true
+          "$SDKMANAGER" "platform-tools"
 
       - name: Generate Android project
         working-directory: ${{ steps.project.outputs.app }}
