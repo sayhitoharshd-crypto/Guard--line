@@ -26,7 +26,7 @@ jobs:
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No project ZIP found in repository root."
+            echo "ERROR: No project ZIP found."
             exit 1
           fi
 
@@ -36,7 +36,7 @@ jobs:
           APP_JSON=$(find /tmp/lineguard -path '*/artifacts/lineguard/app.json' -print -quit)
 
           if [ -z "$APP_JSON" ]; then
-            echo "ERROR: Could not find artifacts/lineguard/app.json."
+            echo "ERROR: app.json not found."
             exit 1
           fi
 
@@ -44,7 +44,7 @@ jobs:
           ROOT_DIR=$(find /tmp/lineguard -name pnpm-workspace.yaml -printf '%h\n' -quit)
 
           if [ -z "$ROOT_DIR" ]; then
-            echo "ERROR: Could not find pnpm workspace root."
+            echo "ERROR: pnpm workspace not found."
             exit 1
           fi
 
@@ -88,9 +88,19 @@ jobs:
           yes | "$SDKMANAGER" --licenses || true
           "$SDKMANAGER" "platform-tools"
 
+      - name: Prepare Expo dependencies
+        working-directory: ${{ steps.project.outputs.app }}
+        env:
+          CI: "1"
+        run: |
+          pnpm add expo react react-native --no-save
+
       - name: Generate Android project
         working-directory: ${{ steps.project.outputs.app }}
-        run: pnpm exec expo prebuild --platform android --non-interactive --clean
+        env:
+          CI: "1"
+        run: |
+          pnpm exec expo prebuild --platform android --clean
 
       - name: Build debug APK
         working-directory: ${{ steps.project.outputs.app }}/android
