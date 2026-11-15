@@ -1,5 +1,5 @@
 
-name: LineGuard Android APK
+name: LineGuard Standalone Android APK
 
 on:
   workflow_dispatch:
@@ -12,41 +12,51 @@ permissions:
 
 jobs:
   build:
-    name: Build LineGuard APK
+    name: Build Standalone LineGuard APK
     runs-on: ubuntu-latest
+    timeout-minutes: 90
 
     steps:
-      - name: Check out repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Find and extract LineGuard project
+      - name: Extract LineGuard source
         id: project
         shell: bash
         run: |
-          ZIP_FILE=$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: Project ZIP not found."
-            exit 1
-          fi
-
           mkdir -p /tmp/lineguard
-          unzip -q "$ZIP_FILE" -d /tmp/lineguard
 
-          APP_JSON=$(find /tmp/lineguard -path '*/artifacts/lineguard/app.json' -print -quit)
+          FOUND=false
 
-          if [ -z "$APP_JSON" ]; then
-            echo "ERROR: LineGuard app.json not found."
+          for ZIP in ./*.zip; do
+            [ -f "$ZIP" ] || continue
+
+            TEMP="/tmp/lineguard/check"
+            mkdir -p "$TEMP"
+
+            if unzip -q "$ZIP" -d "$TEMP" 2>/dev/null; then
+              APP_JSON=$(find "$TEMP" -path '*/artifacts/lineguard/app.json' -print -quit)
+
+              if [ -n "$APP_JSON" ]; then
+                cp -a "$TEMP/." /tmp/lineguard/
+                FOUND=true
+                break
+              fi
+            fi
+
+            rm -rf "$TEMP"
+          done
+
+          if [ "$FOUND" != "true" ]; then
+            echo "ERROR: LineGuard source ZIP not found."
             exit 1
           fi
 
-          APP_DIR=$(dirname "$APP_JSON")
+          APP_DIR=$(find /tmp/lineguard -path '*/artifacts/lineguard/app.json' -print -quit | xargs dirname)
           ROOT_DIR=$(find /tmp/lineguard -name pnpm-workspace.yaml -printf '%h\n' -quit)
 
-          if [ -z "$ROOT_DIR" ]; then
-            echo "ERROR: Workspace root not found."
-            exit 1
-          fi
+          test -f "$APP_DIR/package.json"
+          test -f "$APP_DIR/google-services.json"
 
           echo "app=$APP_DIR" >> "$GITHUB_OUTPUT"
           echo "root=$ROOT_DIR" >> "$GITHUB_OUTPUT"
@@ -61,15 +71,15 @@ jobs:
           corepack enable
           corepack prepare pnpm@10 --activate
 
-      - name: Install dependencies
-        working-directory: ${{ steps.project.outputs.root }}
-        run: pnpm install --no-frozen-lockfile
-
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Install dependencies
+        working-directory: ${{ steps.project.outputs.root }}
+        run: pnpm install --no-frozen-lockfile
 
       - name: Accept Android SDK licences
         shell: bash
@@ -77,14 +87,14 @@ jobs:
           SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | sort | tail -n 1)
 
           if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: Android SDK manager not found."
+            echo "Android SDK manager not found."
             exit 1
           fi
 
           yes | "$SDKMANAGER" --licenses || true
           "$SDKMANAGER" "platform-tools"
 
-      - name: Generate Android project
+      - name: Generate Android native project
         working-directory: ${{ steps.project.outputs.app }}
         env:
           CI: "1"
@@ -95,16 +105,27 @@ jobs:
         working-directory: ${{ steps.project.outputs.root }}
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build debug APK
+      - name: Build standalone Release APK
         working-directory: ${{ steps.project.outputs.app }}/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon
 
-      - name: Upload APK
+      - name: Verify embedded application bundle
+        working-directory: ${{ steps.project.outputs.app }}/android
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+
+          test -s "$APK"
+
+          unzip -l "$APK" | grep -E 'assets/index.android.bundle|assets/.+bundle'
+
+          sha256sum "$APK"
+
+      - name: Upload standalone APK
         uses: actions/upload-artifact@v4
         with:
-          name: LineGuard-debug-APK
-          path: ${{ steps.project.outputs.app }}/android/app/build/outputs/apk/debug/app-debug.apk
+          name: LineGuard-Standalone-Release-APK
+          path: ${{ steps.project.outputs.app }}/android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
