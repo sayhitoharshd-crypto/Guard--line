@@ -19,7 +19,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Find and extract project
+      - name: Find and extract LineGuard project
         id: project
         shell: bash
         run: |
@@ -88,8 +88,8 @@ jobs:
         working-directory: ${{ steps.project.outputs.app }}
         env:
           CI: "1"
-          EXPO_NO_INSTALL: "1"
-        run: pnpm exec expo prebuild --platform android --clean
+        run: |
+          pnpm exec expo prebuild --platform android --clean --no-install
 
       - name: Install generated dependencies
         working-directory: ${{ steps.project.outputs.root }}
