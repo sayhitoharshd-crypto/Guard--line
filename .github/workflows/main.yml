@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Standalone LineGuard APK
+    name: Build LineGuard Release APK
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -20,43 +20,50 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract LineGuard source
+      - name: Find and extract LineGuard source ZIP
         id: project
         shell: bash
         run: |
-          mkdir -p /tmp/lineguard
-
+          mkdir -p /tmp/lineguard/source
           FOUND=false
 
           for ZIP in ./*.zip; do
             [ -f "$ZIP" ] || continue
 
-            TEMP="/tmp/lineguard/check"
+            TEMP="/tmp/lineguard/candidate"
+            rm -rf "$TEMP"
             mkdir -p "$TEMP"
 
             if unzip -q "$ZIP" -d "$TEMP" 2>/dev/null; then
               APP_JSON=$(find "$TEMP" -path '*/artifacts/lineguard/app.json' -print -quit)
 
               if [ -n "$APP_JSON" ]; then
-                cp -a "$TEMP/." /tmp/lineguard/
+                cp -a "$TEMP/." /tmp/lineguard/source/
                 FOUND=true
+                echo "Found LineGuard source in $ZIP"
                 break
               fi
             fi
-
-            rm -rf "$TEMP"
           done
 
           if [ "$FOUND" != "true" ]; then
-            echo "ERROR: LineGuard source ZIP not found."
+            echo "ERROR: No ZIP containing artifacts/lineguard/app.json was found."
             exit 1
           fi
 
-          APP_DIR=$(find /tmp/lineguard -path '*/artifacts/lineguard/app.json' -print -quit | xargs dirname)
-          ROOT_DIR=$(find /tmp/lineguard -name pnpm-workspace.yaml -printf '%h\n' -quit)
+          APP_JSON=$(find /tmp/lineguard/source -path '*/artifacts/lineguard/app.json' -print -quit)
+          APP_DIR=$(dirname "$APP_JSON")
+          ROOT_DIR=$(find /tmp/lineguard/source -name pnpm-workspace.yaml -printf '%h\n' -quit)
 
-          test -f "$APP_DIR/package.json"
-          test -f "$APP_DIR/google-services.json"
+          if [ -z "$ROOT_DIR" ]; then
+            echo "ERROR: pnpm workspace root not found."
+            exit 1
+          fi
+
+          if [ ! -f "$APP_DIR/google-services.json" ]; then
+            echo "ERROR: Firebase google-services.json is missing."
+            exit 1
+          fi
 
           echo "app=$APP_DIR" >> "$GITHUB_OUTPUT"
           echo "root=$ROOT_DIR" >> "$GITHUB_OUTPUT"
@@ -77,9 +84,8 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install dependencies
-        working-directory: ${{ steps.project.outputs.root }}
-        run: pnpm install --no-frozen-lockfile
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
       - name: Accept Android SDK licences
         shell: bash
@@ -87,23 +93,48 @@ jobs:
           SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | sort | tail -n 1)
 
           if [ -z "$SDKMANAGER" ]; then
-            echo "Android SDK manager not found."
+            echo "ERROR: Android SDK manager not found."
             exit 1
           fi
 
           yes | "$SDKMANAGER" --licenses || true
           "$SDKMANAGER" "platform-tools"
 
-      - name: Generate Android native project
+      - name: Install workspace dependencies
+        working-directory: ${{ steps.project.outputs.root }}
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Verify Expo dependencies
+        working-directory: ${{ steps.project.outputs.app }}
+        run: |
+          node -e "console.log('Expo:', require('expo/package.json').version)"
+          node -e "console.log('React Native:', require('react-native/package.json').version)"
+
+      - name: Generate Android project
         working-directory: ${{ steps.project.outputs.app }}
         env:
           CI: "1"
         run: |
           pnpm exec expo prebuild --platform android --clean --no-install
 
-      - name: Install generated dependencies
-        working-directory: ${{ steps.project.outputs.root }}
-        run: pnpm install --no-frozen-lockfile
+      - name: Remove unnecessary Foojay resolver
+        working-directory: ${{ steps.project.outputs.app }}/android
+        shell: bash
+        run: |
+          if [ ! -f settings.gradle ]; then
+            echo "ERROR: settings.gradle not found."
+            exit 1
+          fi
+
+          sed -i '/foojay-resolver-convention/d' settings.gradle
+
+          if grep -q 'foojay-resolver-convention' settings.gradle; then
+            echo "ERROR: Foojay resolver was not removed."
+            exit 1
+          fi
+
+          echo "Gradle settings after patch:"
+          cat settings.gradle
 
       - name: Build standalone Release APK
         working-directory: ${{ steps.project.outputs.app }}/android
@@ -111,15 +142,23 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
 
-      - name: Verify embedded application bundle
+      - name: Verify APK and embedded JavaScript bundle
         working-directory: ${{ steps.project.outputs.app }}/android
         run: |
           APK="app/build/outputs/apk/release/app-release.apk"
 
-          test -s "$APK"
+          if [ ! -s "$APK" ]; then
+            echo "ERROR: Release APK was not generated."
+            exit 1
+          fi
 
-          unzip -l "$APK" | grep -E 'assets/index.android.bundle|assets/.+bundle'
+          if ! unzip -l "$APK" | grep -q 'assets/index.android.bundle'; then
+            echo "ERROR: Embedded JavaScript bundle not found."
+            exit 1
+          fi
 
+          echo "Standalone APK verified."
+          ls -lh "$APK"
           sha256sum "$APK"
 
       - name: Upload standalone APK
