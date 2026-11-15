@@ -1,5 +1,5 @@
 
-name: LineGuard Android APK Build
+name: LineGuard Android APK
 
 on:
   workflow_dispatch:
@@ -12,60 +12,45 @@ permissions:
 
 jobs:
   build:
-    name: Build LineGuard Android APK
+    name: Build LineGuard APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Find and extract LineGuard ZIP
-        shell: bash
-        run: |
-          set -e
-          mkdir -p /tmp/lineguard
-
-          ZIP_FILE=$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file found."
-            exit 1
-          fi
-
-          echo "Found: $ZIP_FILE"
-          unzip -o "$ZIP_FILE" -d /tmp/lineguard
-
-      - name: Locate LineGuard project
+      - name: Find and extract LineGuard project
         id: project
         shell: bash
         run: |
-          set -e
-
-          WORKSPACE=$(find /tmp/lineguard -name pnpm-workspace.yaml -print -quit)
-
-          if [ -z "$WORKSPACE" ]; then
-            echo "ERROR: pnpm-workspace.yaml not found."
+          ZIP_FILE=$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "No project ZIP found in repository root."
             exit 1
           fi
 
-          PROJECT_ROOT=$(dirname "$WORKSPACE")
+          mkdir -p /tmp/lineguard
+          unzip -q "$ZIP_FILE" -d /tmp/lineguard
 
-          APP_CONFIG=$(find "$PROJECT_ROOT" \
-            -path '*/node_modules/*' -prune -o \
-            -path '*/artifacts/lineguard/app.json' -print | head -1)
-
-          if [ -z "$APP_CONFIG" ]; then
-            echo "ERROR: LineGuard app.json not found."
+          APP_JSON=$(find /tmp/lineguard -path '*/artifacts/lineguard/app.json' -print -quit)
+          if [ -z "$APP_JSON" ]; then
+            echo "Could not find artifacts/lineguard/app.json."
             exit 1
           fi
 
-          APP_DIR=$(dirname "$APP_CONFIG")
+          APP_DIR=$(dirname "$APP_JSON")
+          ROOT_DIR=$(dirname "$(find "$APP_DIR" -name pnpm-workspace.yaml -print -quit | head -n 1)")
+          if [ ! -f "$ROOT_DIR/pnpm-workspace.yaml" ]; then
+            ROOT_DIR=$(find /tmp/lineguard -name pnpm-workspace.yaml -printf '%h\n' -quit)
+          fi
 
-          echo "root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
+          if [ -z "$ROOT_DIR" ] || [ ! -f "$ROOT_DIR/pnpm-workspace.yaml" ]; then
+            echo "Could not find pnpm workspace root."
+            exit 1
+          fi
+
           echo "app=$APP_DIR" >> "$GITHUB_OUTPUT"
-
-          echo "Project root: $PROJECT_ROOT"
-          echo "App directory: $APP_DIR"
+          echo "root=$ROOT_DIR" >> "$GITHUB_OUTPUT"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -73,48 +58,37 @@ jobs:
           node-version: 22
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
+        run: |
+          corepack enable
+          corepack prepare pnpm@10 --activate
 
       - name: Install dependencies
         working-directory: ${{ steps.project.outputs.root }}
         run: pnpm install --no-frozen-lockfile
 
-      - name: Initialize Git for EAS
-        working-directory: ${{ steps.project.outputs.root }}
-        run: |
-          git init
-          git config user.name "LineGuard Build"
-          git config user.email "lineguard-build@example.com"
-          git add -A
-          git commit -m "Prepare LineGuard Android build"
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
-      - name: Check Expo token
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          if [ -z "$EXPO_TOKEN" ]; then
-            echo "ERROR: EXPO_TOKEN secret is missing."
-            exit 1
-          fi
-          echo "Expo token is configured."
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Initialize Expo project
+      - name: Generate Android project
         working-directory: ${{ steps.project.outputs.app }}
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          npx eas-cli init \
-            --account arshdxr \
-            --non-interactive
+        run: pnpm exec expo prebuild --platform android --non-interactive --clean
 
-      - name: Build Android APK with EAS
-        working-directory: ${{ steps.project.outputs.app }}
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      - name: Build debug APK
+        working-directory: ${{ steps.project.outputs.app }}/android
         run: |
-          npx eas-cli build \
-            --platform android \
-            --profile preview \
-            --non-interactive
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LineGuard-debug-APK
+          path: ${{ steps.project.outputs.app }}/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
