@@ -24,7 +24,6 @@ jobs:
         shell: bash
         run: |
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)
-
           if [ -z "$ZIP_FILE" ]; then
             echo "ERROR: No project ZIP found."
             exit 1
@@ -34,7 +33,6 @@ jobs:
           unzip -q "$ZIP_FILE" -d /tmp/lineguard
 
           APP_JSON=$(find /tmp/lineguard -path '*/artifacts/lineguard/app.json' -print -quit)
-
           if [ -z "$APP_JSON" ]; then
             echo "ERROR: app.json not found."
             exit 1
@@ -74,13 +72,9 @@ jobs:
       - name: Accept Android SDK licences
         shell: bash
         run: |
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | sort | tail -n 1)
 
-          if [ ! -f "$SDKMANAGER" ]; then
-            SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | sort | tail -n 1)
-          fi
-
-          if [ -z "$SDKMANAGER" ] || [ ! -f "$SDKMANAGER" ]; then
+          if [ -z "$SDKMANAGER" ]; then
             echo "ERROR: Android SDK manager not found."
             exit 1
           fi
@@ -88,19 +82,18 @@ jobs:
           yes | "$SDKMANAGER" --licenses || true
           "$SDKMANAGER" "platform-tools"
 
-      - name: Prepare Expo dependencies
+      - name: Check Expo installation
         working-directory: ${{ steps.project.outputs.app }}
-        env:
-          CI: "1"
         run: |
-          pnpm add expo react react-native --no-save
+          node -e "console.log('Expo:', require.resolve('expo/package.json'))"
+          node -e "console.log('React:', require.resolve('react/package.json'))"
+          node -e "console.log('React Native:', require.resolve('react-native/package.json'))"
 
       - name: Generate Android project
         working-directory: ${{ steps.project.outputs.app }}
         env:
           CI: "1"
-        run: |
-          pnpm exec expo prebuild --platform android --clean
+        run: pnpm exec expo prebuild --platform android --clean
 
       - name: Build debug APK
         working-directory: ${{ steps.project.outputs.app }}/android
