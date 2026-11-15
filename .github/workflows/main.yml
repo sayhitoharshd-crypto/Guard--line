@@ -19,13 +19,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Find and extract LineGuard project
+      - name: Find and extract project
         id: project
         shell: bash
         run: |
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)
+
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No project ZIP found."
+            echo "ERROR: Project ZIP not found."
             exit 1
           fi
 
@@ -33,8 +34,9 @@ jobs:
           unzip -q "$ZIP_FILE" -d /tmp/lineguard
 
           APP_JSON=$(find /tmp/lineguard -path '*/artifacts/lineguard/app.json' -print -quit)
+
           if [ -z "$APP_JSON" ]; then
-            echo "ERROR: app.json not found."
+            echo "ERROR: LineGuard app.json not found."
             exit 1
           fi
 
@@ -42,7 +44,7 @@ jobs:
           ROOT_DIR=$(find /tmp/lineguard -name pnpm-workspace.yaml -printf '%h\n' -quit)
 
           if [ -z "$ROOT_DIR" ]; then
-            echo "ERROR: pnpm workspace not found."
+            echo "ERROR: Workspace root not found."
             exit 1
           fi
 
@@ -82,18 +84,16 @@ jobs:
           yes | "$SDKMANAGER" --licenses || true
           "$SDKMANAGER" "platform-tools"
 
-      - name: Check Expo installation
-        working-directory: ${{ steps.project.outputs.app }}
-        run: |
-          node -e "console.log('Expo:', require.resolve('expo/package.json'))"
-          node -e "console.log('React:', require.resolve('react/package.json'))"
-          node -e "console.log('React Native:', require.resolve('react-native/package.json'))"
-
       - name: Generate Android project
         working-directory: ${{ steps.project.outputs.app }}
         env:
           CI: "1"
+          EXPO_NO_INSTALL: "1"
         run: pnpm exec expo prebuild --platform android --clean
+
+      - name: Install generated dependencies
+        working-directory: ${{ steps.project.outputs.root }}
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build debug APK
         working-directory: ${{ steps.project.outputs.app }}/android
