@@ -1,43 +1,104 @@
 
-name: Build LineGuard APK
+name: LineGuard Android APK Build
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
-  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
+    name: Build LineGuard Android APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout project
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Apply corrected project ZIP
+      - name: Find and extract LineGuard ZIP
+        shell: bash
         run: |
-          mkdir -p /tmp/lineguard
-          unzip -oq lineguard-corrected.zip -d /tmp/lineguard
-          cp -a /tmp/lineguard/. .
-          sed -i "s#from '../hooks/useLocation'#from '../useLocation'#" SRC/screens/ReportScreen.js
-          rm -f lineguard-corrected.zip
+          set -e
 
-      - name: Setup Node
+          mkdir -p /tmp/lineguard
+
+          ZIP_FILE=$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found in repository root."
+            exit 1
+          fi
+
+          echo "Found ZIP: $ZIP_FILE"
+
+          unzip -o "$ZIP_FILE" -d /tmp/lineguard
+
+          echo "ZIP extracted successfully."
+
+      - name: Locate project
+        id: project
+        shell: bash
+        run: |
+          set -e
+
+          WORKSPACE=$(find /tmp/lineguard -name pnpm-workspace.yaml -print -quit)
+
+          if [ -z "$WORKSPACE" ]; then
+            echo "ERROR: pnpm-workspace.yaml not found."
+            find /tmp/lineguard -maxdepth 4 -type f | head -100
+            exit 1
+          fi
+
+          PROJECT_ROOT=$(dirname "$WORKSPACE")
+
+          APP_CONFIG=$(find "$PROJECT_ROOT" -path '*/node_modules/*' -prune -o -name app.json -print | grep '/artifacts/lineguard/app.json' | head -1 || true)
+
+          if [ -z "$APP_CONFIG" ]; then
+            echo "ERROR: LineGuard app.json not found."
+            exit 1
+          fi
+
+          APP_DIR=$(dirname "$APP_CONFIG")
+
+          echo "root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
+          echo "app=$APP_DIR" >> "$GITHUB_OUTPUT"
+
+          echo "Project root: $PROJECT_ROOT"
+          echo "App directory: $APP_DIR"
+
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
-      - name: Install dependencies
-        run: npm install
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
 
-      - name: Link Expo project
-        run: npx eas-cli@latest init --account arshdxr --non-interactive
+      - name: Install project dependencies
+        working-directory: ${{ steps.project.outputs.root }}
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Set up Expo authentication
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "ERROR: EXPO_TOKEN secret is missing."
+            exit 1
+          fi
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Build Android APK
-        run: npx eas-cli@latest build --platform android --profile preview --non-interactive
+      - name: Build Android APK with EAS
+        working-directory: ${{ steps.project.outputs.app }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          npx eas-cli build \
+            --platform android \
+            --profile preview \
+            --non-interactive
