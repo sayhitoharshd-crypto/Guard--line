@@ -1,0 +1,43 @@
+
+name: Build LineGuard APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Apply corrected project ZIP
+        run: |
+          mkdir -p /tmp/lineguard
+          unzip -oq lineguard-corrected.zip -d /tmp/lineguard
+          cp -a /tmp/lineguard/. .
+          sed -i "s#from '../hooks/useLocation'#from '../useLocation'#" SRC/screens/ReportScreen.js
+          rm -f lineguard-corrected.zip
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Link Expo project
+        run: npx eas-cli@latest init --account arshdxr --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build Android APK
+        run: npx eas-cli@latest build --platform android --profile preview --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
